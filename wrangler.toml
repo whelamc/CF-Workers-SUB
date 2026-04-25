@@ -3,6 +3,13 @@ main = "_worker.js"
 compatibility_date = "2025-07-23"
 keep_vars = true
 
-#[[kv_namespaces]]
-#binding = "KV"			#KV绑定名默认不可修改
-#id = "7dbef248fcc547d39689967f91f5f46f"					#KV据库id
+# 线上部署使用 Cloudflare 控制台绑定 KV（变量名: KV）
+# 不在 wrangler.toml 声明生产 kv_namespaces，避免要求填写 namespace id
+
+[env.local]
+name = "sub-worker-local"
+
+[[env.local.kv_namespaces]]
+binding = "KV" # 本地调试专用 KV 占位
+id = "00000000000000000000000000000000"
+preview_id = "11111111111111111111111111111111"
