@@ -1,5 +1,7 @@
 # ⚙ 自建汇聚订阅 CF-Workers-SUB
 
+[English](./README.md) | 中文
+
 ![AnyTLS 订阅聚合截图](./anytls.png)
 
 这是一个将多个节点和订阅合并为单一链接的工具，支持自动适配与自定义分流，简化了订阅管理。
