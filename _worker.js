@@ -372,12 +372,17 @@ function fixAnytlsProxies(lines) {
 		const topLevelSection = line.match(/^([A-Za-z0-9_-]+):\s*$/);
 		if (topLevelSection) section = topLevelSection[1];
 
-		if (section === 'proxies' && /^-\s+name:\s*/.test(line)) {
+		if (section === 'proxies' && /^\s*-\s+\{.*\}\s*$/.test(line)) {
+			result.push(...expandInlineAnytlsProxy(line));
+			continue;
+		}
+
+		if (section === 'proxies' && /^\s*-\s+name:\s*/.test(line)) {
 			const block = [line];
 			i++;
 			while (i < lines.length) {
 				const current = lines[i];
-				if (/^[A-Za-z0-9_-]+:\s*$/.test(current) || /^-\s+name:\s*/.test(current)) {
+				if (/^[A-Za-z0-9_-]+:\s*$/.test(current) || /^\s*-\s+name:\s*/.test(current)) {
 					i--;
 					break;
 				}
@@ -404,16 +409,93 @@ function fixAnytlsBlock(block) {
 	while (insertPos > 0 && fixed[insertPos - 1].trim() === '') insertPos--;
 
 	const hasUdp = fixed.some((line) => /^\s*udp:\s*/i.test(line));
-	const hasAlpn = fixed.some((line) => /^\s*alpn:\s*$/i.test(line));
+	const hasAlpn = fixed.some((line) => /^\s*alpn:\s*/i.test(line));
+	const hasSkipCertVerify = fixed.some((line) => /^\s*skip-cert-verify:\s*/i.test(line));
 	if (!hasUdp) {
 		fixed.splice(insertPos, 0, `${indent}udp: true`);
 		insertPos++;
 	}
 	if (!hasAlpn) {
 		fixed.splice(insertPos, 0, `${indent}alpn:`, `${indent}  - h2`, `${indent}  - http/1.1`);
+		insertPos += 3;
+	}
+	if (!hasSkipCertVerify) {
+		fixed.splice(insertPos, 0, `${indent}skip-cert-verify: false`);
 	}
 
 	return fixed;
+}
+
+function splitInlineMapItems(content) {
+	const items = [];
+	let current = '';
+	let quote = '';
+	for (let i = 0; i < content.length; i++) {
+		const ch = content[i];
+		if ((ch === '"' || ch === "'") && content[i - 1] !== '\\') {
+			if (!quote) quote = ch;
+			else if (quote === ch) quote = '';
+			current += ch;
+			continue;
+		}
+		if (ch === ',' && !quote) {
+			items.push(current.trim());
+			current = '';
+			continue;
+		}
+		current += ch;
+	}
+	if (current.trim()) items.push(current.trim());
+	return items;
+}
+
+function expandInlineAnytlsProxy(line) {
+	const match = line.match(/^(\s*)-\s+\{(.*)\}\s*$/);
+	if (!match) return [line];
+
+	const itemIndent = match[1];
+	const pairText = match[2];
+	const pairs = splitInlineMapItems(pairText).map((part) => {
+		const idx = part.indexOf(':');
+		if (idx === -1) return null;
+		const key = part.slice(0, idx).trim();
+		const value = part.slice(idx + 1).trim();
+		return { key, value };
+	}).filter(Boolean);
+
+	if (!pairs.length) return [line];
+
+	const getValue = (key) => {
+		const pair = pairs.find((x) => x.key.toLowerCase() === key.toLowerCase());
+		return pair ? pair.value : null;
+	};
+	const hasKey = (key) => pairs.some((x) => x.key.toLowerCase() === key.toLowerCase());
+
+	const typeValue = getValue('type');
+	if (!typeValue || typeValue.replace(/^['"]|['"]$/g, '').toLowerCase() !== 'anytls') {
+		return [line];
+	}
+
+	for (const pair of pairs) {
+		if (pair.key.toLowerCase() === 'fingerprint') pair.key = 'client-fingerprint';
+	}
+	if (!hasKey('client-fingerprint')) pairs.push({ key: 'client-fingerprint', value: 'chrome' });
+	if (!hasKey('udp')) pairs.push({ key: 'udp', value: 'true' });
+	if (!hasKey('skip-cert-verify')) pairs.push({ key: 'skip-cert-verify', value: 'false' });
+
+	const lines = [];
+	const first = pairs[0];
+	lines.push(`${itemIndent}- ${first.key}: ${first.value}`);
+	for (let i = 1; i < pairs.length; i++) {
+		lines.push(`${itemIndent}  ${pairs[i].key}: ${pairs[i].value}`);
+	}
+	if (!hasKey('alpn')) {
+		lines.push(`${itemIndent}  alpn:`);
+		lines.push(`${itemIndent}    - h2`);
+		lines.push(`${itemIndent}    - http/1.1`);
+	}
+
+	return lines;
 }
 
 async function proxyURL(proxyURL, url) {
