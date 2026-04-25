@@ -934,11 +934,6 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 								</section>
 
 								<section class="card">
-									<h2>订阅转换配置</h2>
-									<div class="kv">SUBAPI（后端）: <strong>${subProtocol}://${subConverter}</strong><br>SUBCONFIG（配置）: <strong>${subConfig}</strong></div>
-								</section>
-
-								<section class="card">
 									<h2>${FileName} 汇聚订阅编辑</h2>
 									${hasKV ? `
 									<textarea class="editor" id="content" placeholder="每行一个链接，支持节点链接与订阅链接混合。示例:
@@ -949,9 +944,9 @@ https://example.com/sub">${content}</textarea>
 									` : '<div class="warn">请绑定 <strong>变量名称</strong> 为 <strong>KV</strong> 的 KV 命名空间。</div>'}
 								</section>
 
-								<section class="card footer">
-									Telegram 交流群：<a href="https://t.me/CMLiussss" target="_blank" rel="noopener noreferrer">https://t.me/CMLiussss</a><br>
-									GitHub 项目：<a href="https://github.com/cmliu/CF-Workers-SUB" target="_blank" rel="noopener noreferrer">https://github.com/cmliu/CF-Workers-SUB</a>
+								<section class="card">
+									<h2>订阅转换配置</h2>
+									<div class="kv">SUBAPI（后端）: <strong>${subProtocol}://${subConverter}</strong><br>SUBCONFIG（配置）: <strong>${subConfig}</strong></div>
 								</section>
 							</div>
 						</div>
