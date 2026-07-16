@@ -105,7 +105,7 @@ test('authorized convert endpoint returns extracted node links', async () => {
   assert.match(body.nodes, /\nvmess:\/\//);
 });
 
-test('editor page exposes convertClashConfig for the inline button handler', async () => {
+test('editor page binds the Clash converter button without inline globals', async () => {
   const { worker } = loadWorker();
   const kv = {
     async get() { return ''; },
@@ -122,6 +122,6 @@ test('editor page exposes convertClashConfig for the inline button handler', asy
 
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /onclick="convertClashConfig\(this\)"/);
-  assert.match(html, /window\.convertClashConfig\s*=/);
+  assert.doesNotMatch(html, /onclick="convertClashConfig\(this\)"/);
+  assert.match(html, /convertBtn\.addEventListener\('click'/);
 });

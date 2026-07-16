@@ -1244,7 +1244,7 @@ https://example.com/sub">${content}</textarea>
 									<div class="converter-box">
 										<h3>Clash 配置转明文节点</h3>
 										<textarea class="converter-editor" id="clashSource" placeholder="粘贴 proxies: 开头的 Clash 配置"></textarea>
-										<div class="save-container"><button class="save-btn" id="convertBtn" onclick="convertClashConfig(this)">转换并追加</button><span class="save-status" id="convertStatus"></span></div>
+										<div class="save-container"><button class="save-btn" id="convertBtn">转换并追加</button><span class="save-status" id="convertStatus"></span></div>
 									</div>
 									` : '<div class="warn">请绑定 <strong>变量名称</strong> 为 <strong>KV</strong> 的 KV 命名空间。</div>'}
 								</section>
@@ -1346,7 +1346,7 @@ https://example.com/sub">${content}</textarea>
 								timer = setTimeout(() => saveContent(), 5000);
 							});
 
-							window.convertClashConfig = function(button) {
+							function convertClashConfig(button) {
 								const source = document.getElementById('clashSource');
 								const statusElem = document.getElementById('convertStatus');
 								const updateStatus = (message, isError) => {
@@ -1393,7 +1393,10 @@ https://example.com/sub">${content}</textarea>
 									updateStatus('错误: ' + error.message, true);
 									resetButton();
 								}
-							};
+							}
+
+							const convertBtn = document.getElementById('convertBtn');
+							if (convertBtn) convertBtn.addEventListener('click', () => convertClashConfig(convertBtn));
 						}
 
 						function toggleNotice() {
