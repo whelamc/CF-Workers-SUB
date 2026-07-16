@@ -124,4 +124,6 @@ test('editor page binds the Clash converter button without inline globals', asyn
   const html = await response.text();
   assert.doesNotMatch(html, /onclick="convertClashConfig\(this\)"/);
   assert.match(html, /convertBtn\.addEventListener\('click'/);
+  assert.ok(html.includes("textarea.value = current ? current + '\\n' + data.nodes : data.nodes;"));
+  assert.ok(!html.includes("textarea.value = current ? current + '\n' + data.nodes : data.nodes;"));
 });

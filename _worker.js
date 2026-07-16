@@ -1378,7 +1378,7 @@ https://example.com/sub">${content}</textarea>
 									.then(data => {
 										if (!data.nodes) throw new Error('未提取到节点');
 										const current = textarea.value.trim();
-										textarea.value = current ? current + '\n' + data.nodes : data.nodes;
+										textarea.value = current ? current + '\\n' + data.nodes : data.nodes;
 										textarea.dispatchEvent(new Event('input', { bubbles: true }));
 										updateStatus('已追加 ' + data.count + ' 个节点', false);
 										showToast('转换完成');
