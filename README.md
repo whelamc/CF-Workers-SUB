@@ -67,6 +67,8 @@ This project includes the following AnyTLS-specific patches:
 ## ⚠️ Notes
 To enable Telegram notifications, create a Telegram bot for `TGTOKEN` and obtain target `TGID`.
 
+If an upstream subscription URL in the editor uses an IP address, the Worker fetches that subscription first and passes the materialized content through the temporary subscription, so the converter backend does not need to fetch the IP URL directly.
+
 ## 🙏 Credits
 Original author: [cmliu](https://github.com/cmliu)
 

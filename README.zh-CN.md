@@ -67,6 +67,8 @@
 ## ⚠️ 注意事项
 如需 Telegram 通知，请先创建 Bot 获取 `TGTOKEN`，并获取接收方 `TGID`。
 
+如果汇聚订阅编辑框中的上游订阅地址是 IP 地址，Worker 会先抓取该订阅内容，再通过临时订阅交给订阅转换后端，避免转换后端直接请求该 IP 地址失败。
+
 ## 🙏 致谢
 原作者：[cmliu](https://github.com/cmliu)
 

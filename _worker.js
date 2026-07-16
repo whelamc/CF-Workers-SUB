@@ -545,6 +545,7 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 	let newapi = "";
 	let 订阅转换URLs = "";
 	let 异常订阅 = "";
+	const 已抓取配置 = [];
 	const controller = new AbortController(); // 创建一个AbortController实例，用于取消请求
 	const timeout = setTimeout(() => {
 		controller.abort(); // 2秒后取消所有请求
@@ -588,10 +589,10 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 				const content = await response.value || 'null'; // 获取响应的内容
 				if (content.includes('proxies:')) {
 					//console.log('Clash订阅: ' + response.apiUrl);
-					订阅转换URLs += "|" + response.apiUrl; // Clash 配置
+					已抓取配置.push(content.trim()); // 已由 Worker 抓取，避免转换后端再次请求原始订阅地址
 				} else if (content.includes('outbounds"') && content.includes('inbounds"')) {
 					//console.log('Singbox订阅: ' + response.apiUrl);
-					订阅转换URLs += "|" + response.apiUrl; // Singbox 配置
+					已抓取配置.push(content.trim()); // 已由 Worker 抓取，避免转换后端再次请求原始订阅地址
 				} else if (content.includes('://')) {
 					//console.log('明文订阅: ' + response.apiUrl);
 					newapi += content + '\n'; // 追加内容
@@ -611,7 +612,8 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 		clearTimeout(timeout); // 清除定时器
 	}
 
-	const 订阅内容 = await ADD(newapi + 异常订阅); // 将处理后的内容转换为数组
+	const 普通订阅内容 = (await ADD(newapi + 异常订阅)).filter(item => item?.trim?.()); // 将处理后的内容转换为数组
+	const 订阅内容 = [...已抓取配置, ...普通订阅内容];
 	// 返回处理后的结果
 	return [订阅内容, 订阅转换URLs];
 }
