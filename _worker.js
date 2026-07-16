@@ -66,6 +66,14 @@ export default {
 				},
 			});
 		} else {
+			if (url.searchParams.has('convert')) {
+				if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+				const nodes = clashConfigToNodeLinks(await request.text());
+				return new Response(JSON.stringify({ count: nodes.length, nodes: nodes.join('\n') }), {
+					headers: { 'Content-Type': 'application/json; charset=utf-8' }
+				});
+			}
+
 			if (env.KV) {
 				await 迁移地址列表(env, 'LINK.txt');
 				if (userAgent.includes('mozilla') && !url.search) {
@@ -430,6 +438,7 @@ function splitInlineMapItems(content) {
 	const items = [];
 	let current = '';
 	let quote = '';
+	let bracketDepth = 0;
 	for (let i = 0; i < content.length; i++) {
 		const ch = content[i];
 		if ((ch === '"' || ch === "'") && content[i - 1] !== '\\') {
@@ -438,7 +447,9 @@ function splitInlineMapItems(content) {
 			current += ch;
 			continue;
 		}
-		if (ch === ',' && !quote) {
+		if (!quote && (ch === '[' || ch === '{' || ch === '(')) bracketDepth++;
+		if (!quote && (ch === ']' || ch === '}' || ch === ')')) bracketDepth = Math.max(0, bracketDepth - 1);
+		if (ch === ',' && !quote && bracketDepth === 0) {
 			items.push(current.trim());
 			current = '';
 			continue;
@@ -496,6 +507,271 @@ function expandInlineAnytlsProxy(line) {
 	}
 
 	return lines;
+}
+
+function stripYamlValue(value = '') {
+	let text = String(value).trim();
+	if ((text.startsWith("'") && text.endsWith("'")) || (text.startsWith('"') && text.endsWith('"'))) {
+		text = text.slice(1, -1);
+	}
+	return text;
+}
+
+function parseInlineObject(text = '') {
+	const trimmed = String(text).trim();
+	const match = trimmed.match(/^\{(.*)\}$/);
+	if (!match) return stripYamlValue(trimmed);
+	const object = {};
+	for (const part of splitInlineMapItems(match[1])) {
+		const idx = part.indexOf(':');
+		if (idx === -1) continue;
+		const key = stripYamlValue(part.slice(0, idx)).toLowerCase();
+		const value = part.slice(idx + 1).trim();
+		object[key] = value.startsWith('{') ? parseInlineObject(value) : stripYamlValue(value);
+	}
+	return object;
+}
+
+function parseInlineProxyMap(line) {
+	const match = line.match(/^\s*-\s+\{(.*)\}\s*$/);
+	if (!match) return null;
+	const proxy = {};
+	for (const part of splitInlineMapItems(match[1])) {
+		const idx = part.indexOf(':');
+		if (idx === -1) continue;
+		const key = stripYamlValue(part.slice(0, idx)).toLowerCase();
+		const rawValue = part.slice(idx + 1).trim();
+		const value = rawValue.startsWith('{') ? parseInlineObject(rawValue) : stripYamlValue(rawValue);
+		proxy[key] = value;
+	}
+	return proxy;
+}
+
+function parseBlockScalar(line) {
+	const match = line.match(/^\s*([A-Za-z0-9_-]+):\s*(.*)$/);
+	if (!match) return null;
+	return [match[1].toLowerCase(), stripYamlValue(match[2])];
+}
+
+function readNestedBlock(lines, startIndex, baseIndent) {
+	const values = {};
+	let i = startIndex;
+	for (; i < lines.length; i++) {
+		const line = lines[i];
+		if (!line.trim()) continue;
+		const indent = line.match(/^\s*/)[0].length;
+		if (indent <= baseIndent) break;
+		const scalar = parseBlockScalar(line);
+		if (!scalar) continue;
+		const [key, value] = scalar;
+		if (value) values[key] = value;
+		else {
+			const child = readNestedBlock(lines, i + 1, indent);
+			values[key] = child.values;
+			i = child.endIndex - 1;
+		}
+	}
+	return { values, endIndex: i };
+}
+
+function flattenProxyOptions(proxy) {
+	const ws = proxy['ws-opts'];
+	if (ws && typeof ws === 'object') {
+		if (ws.path) proxy['ws-path'] = ws.path;
+		const headers = ws.headers;
+		if (headers && typeof headers === 'object' && headers.host) proxy['ws-host'] = headers.host;
+	}
+	const grpc = proxy['grpc-opts'];
+	if (grpc && typeof grpc === 'object' && grpc['grpc-service-name']) proxy['grpc-service-name'] = grpc['grpc-service-name'];
+	return proxy;
+}
+
+function collectClashProxies(content = '') {
+	const proxies = [];
+	let inProxies = false;
+	const lines = String(content || '').split(/\r?\n/);
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		if (/^proxies:\s*$/.test(line)) {
+			inProxies = true;
+			continue;
+		}
+		if (inProxies && /^[A-Za-z0-9_-]+:\s*$/.test(line)) break;
+		if (!inProxies) continue;
+		const proxy = parseInlineProxyMap(line);
+		if (proxy) {
+			proxies.push(flattenProxyOptions(proxy));
+			continue;
+		}
+		const blockStart = line.match(/^(\s*)-\s+name:\s*(.*)$/);
+		if (!blockStart) continue;
+		const proxyBlock = { name: stripYamlValue(blockStart[2]) };
+		const baseIndent = blockStart[1].length;
+		i++;
+		for (; i < lines.length; i++) {
+			const current = lines[i];
+			if (!current.trim()) continue;
+			const indent = current.match(/^\s*/)[0].length;
+			if (indent <= baseIndent || /^\s*-\s+name:\s*/.test(current)) {
+				i--;
+				break;
+			}
+			const scalar = parseBlockScalar(current);
+			if (!scalar) continue;
+			const [key, value] = scalar;
+			if (value) proxyBlock[key] = value;
+			else {
+				const nested = readNestedBlock(lines, i + 1, indent);
+				proxyBlock[key] = nested.values;
+			}
+		}
+		proxies.push(flattenProxyOptions(proxyBlock));
+	}
+	return proxies;
+}
+
+function queryString(params) {
+	return Object.entries(params)
+		.filter(([, value]) => value !== undefined && value !== null && value !== '')
+		.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+		.join('&');
+}
+
+function boolLike(value) {
+	return String(value || '').toLowerCase() === 'true' || String(value || '') === '1';
+}
+
+function alpnValue(value = '') {
+	const match = String(value).match(/^\[(.*)\]$/);
+	if (!match) return stripYamlValue(value);
+	return match[1].split(',').map(item => stripYamlValue(item)).filter(Boolean).join(',');
+}
+
+function base64UrlEncode(text) {
+	const bytes = new TextEncoder().encode(text);
+	let binary = '';
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function tlsEnabled(proxy) {
+	return boolLike(proxy.tls) || String(proxy.security || '').toLowerCase() === 'tls';
+}
+
+function networkValue(proxy) {
+	return proxy.network || proxy.type_network || proxy.net;
+}
+
+function transportParams(proxy) {
+	const network = networkValue(proxy);
+	if (network === 'ws') {
+		return {
+			type: 'ws',
+			host: proxy['ws-host'],
+			path: proxy['ws-path']
+		};
+	}
+	if (network === 'grpc') {
+		return {
+			type: 'grpc',
+			serviceName: proxy['grpc-service-name']
+		};
+	}
+	if (network) return { type: network };
+	return {};
+}
+
+function proxyToShareLink(proxy) {
+	const type = String(proxy.type || '').toLowerCase();
+	const name = encodeURIComponent(proxy.name || `${proxy.server}:${proxy.port}`);
+	const server = proxy.server;
+	const port = proxy.port;
+	if (!type || !server || !port) return '';
+
+	if (type === 'trojan') {
+		const query = queryString({
+			security: 'tls',
+			sni: proxy.sni || proxy.servername,
+			allowInsecure: boolLike(proxy['skip-cert-verify']) ? '1' : '',
+			...transportParams(proxy)
+		});
+		return `trojan://${encodeURIComponent(proxy.password || '')}@${server}:${port}?${query}#${name}`;
+	}
+
+	if (type === 'anytls') {
+		const query = queryString({
+			sni: proxy.sni || proxy.servername,
+			fp: proxy['client-fingerprint'] || proxy.fingerprint,
+			insecure: boolLike(proxy['skip-cert-verify']) ? '1' : ''
+		});
+		return `anytls://${encodeURIComponent(proxy.password || '')}@${server}:${port}?${query}#${name}`;
+	}
+
+	if (type === 'tuic') {
+		const query = queryString({
+			sni: proxy.sni || proxy.servername,
+			alpn: alpnValue(proxy.alpn),
+			congestion_control: proxy['congestion-controller'],
+			udp_relay_mode: proxy['udp-relay-mode'],
+			allow_insecure: boolLike(proxy['skip-cert-verify']) ? '1' : ''
+		});
+		return `tuic://${encodeURIComponent(proxy.uuid || '')}:${encodeURIComponent(proxy.password || '')}@${server}:${port}?${query}#${name}`;
+	}
+
+	if (type === 'ss' || type === 'shadowsocks') {
+		const userInfo = base64UrlEncode(`${proxy.cipher || proxy.method}:${proxy.password || ''}`);
+		return `ss://${userInfo}@${server}:${port}#${name}`;
+	}
+
+	if (type === 'vless') {
+		const security = proxy.security || (proxy.reality ? 'reality' : (tlsEnabled(proxy) ? 'tls' : ''));
+		const query = queryString({
+			encryption: proxy.encryption || 'none',
+			security,
+			sni: proxy.servername || proxy.sni,
+			fp: proxy['client-fingerprint'] || proxy.fingerprint,
+			flow: proxy.flow,
+			pbk: proxy['reality-opts']?.['public-key'] || proxy.pbk,
+			sid: proxy['reality-opts']?.['short-id'] || proxy.sid,
+			...transportParams(proxy)
+		});
+		return `vless://${encodeURIComponent(proxy.uuid || '')}@${server}:${port}?${query}#${name}`;
+	}
+
+	if (type === 'vmess') {
+		const vmess = {
+			v: '2',
+			ps: proxy.name || `${server}:${port}`,
+			add: server,
+			port: String(port),
+			id: proxy.uuid || '',
+			aid: String(proxy.alterid || proxy['alter-id'] || '0'),
+			scy: proxy.cipher || 'auto',
+			net: networkValue(proxy) || 'tcp',
+			type: 'none',
+			host: proxy['ws-host'] || '',
+			path: proxy['ws-path'] || '',
+			tls: tlsEnabled(proxy) ? 'tls' : '',
+			sni: proxy.servername || proxy.sni || ''
+		};
+		return `vmess://${base64UrlEncode(JSON.stringify(vmess))}`;
+	}
+
+	if (type === 'hysteria2' || type === 'hy2') {
+		const query = queryString({
+			sni: proxy.sni,
+			insecure: boolLike(proxy['skip-cert-verify']) ? '1' : '',
+			obfs: proxy.obfs,
+			'obfs-password': proxy['obfs-password'] || proxy['obfs-passwords']
+		});
+		return `hy2://${encodeURIComponent(proxy.password || '')}@${server}:${port}?${query}#${name}`;
+	}
+
+	return '';
+}
+
+function clashConfigToNodeLinks(content = '') {
+	return collectClashProxies(content).map(proxyToShareLink).filter(Boolean);
 }
 
 async function proxyURL(proxyURL, url) {
@@ -860,6 +1136,28 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 							}
 							.save-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 							.save-status { font-size: 13px; color: var(--muted); }
+							.converter-box {
+								margin-top: 14px;
+								padding-top: 14px;
+								border-top: 1px dashed var(--stroke);
+							}
+							.converter-box h3 {
+								margin: 0 0 8px;
+								font-size: 15px;
+							}
+							.converter-editor {
+								width: 100%;
+								min-height: 180px;
+								padding: 12px;
+								border: 1px solid var(--stroke);
+								border-radius: 14px;
+								background: #fff;
+								font-family: "SF Mono", "Roboto Mono", "Cascadia Code", "Consolas", monospace;
+								font-size: 12px;
+								line-height: 1.5;
+								color: #20384d;
+								resize: vertical;
+							}
 							.warn {
 								border: 1px dashed #d7a25f;
 								border-radius: 12px;
@@ -943,6 +1241,11 @@ vless://...
 vmess://...
 https://example.com/sub">${content}</textarea>
 									<div class="save-container"><button class="save-btn" id="saveBtn" onclick="saveContent(this)">保存</button><span class="save-status" id="saveStatus"></span></div>
+									<div class="converter-box">
+										<h3>Clash 配置转明文节点</h3>
+										<textarea class="converter-editor" id="clashSource" placeholder="粘贴 proxies: 开头的 Clash 配置"></textarea>
+										<div class="save-container"><button class="save-btn" id="convertBtn" onclick="convertClashConfig(this)">转换并追加</button><span class="save-status" id="convertStatus"></span></div>
+									</div>
 									` : '<div class="warn">请绑定 <strong>变量名称</strong> 为 <strong>KV</strong> 的 KV 命名空间。</div>'}
 								</section>
 
@@ -1042,6 +1345,55 @@ https://example.com/sub">${content}</textarea>
 								clearTimeout(timer);
 								timer = setTimeout(() => saveContent(), 5000);
 							});
+
+							function convertClashConfig(button) {
+								const source = document.getElementById('clashSource');
+								const statusElem = document.getElementById('convertStatus');
+								const updateStatus = (message, isError) => {
+									if (!statusElem) return;
+									statusElem.textContent = message;
+									statusElem.style.color = isError ? 'var(--danger)' : 'var(--muted)';
+								};
+								const resetButton = () => {
+									if (!button) return;
+									button.textContent = '转换并追加';
+									button.disabled = false;
+								};
+
+								try {
+									if (!source || !source.value.trim()) { updateStatus('没有可转换内容', true); return; }
+									if (button) { button.textContent = '转换中...'; button.disabled = true; }
+									const convertUrl = new URL(window.location.href);
+									convertUrl.searchParams.set('convert', '1');
+									fetch(convertUrl.toString(), {
+										method: 'POST',
+										body: source.value,
+										headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+										cache: 'no-cache'
+									})
+									.then(response => {
+										if (!response.ok) throw new Error('HTTP ' + response.status);
+										return response.json();
+									})
+									.then(data => {
+										if (!data.nodes) throw new Error('未提取到节点');
+										const current = textarea.value.trim();
+										textarea.value = current ? current + '\n' + data.nodes : data.nodes;
+										textarea.dispatchEvent(new Event('input', { bubbles: true }));
+										updateStatus('已追加 ' + data.count + ' 个节点', false);
+										showToast('转换完成');
+									})
+									.catch(error => {
+										console.error('Convert error:', error);
+										updateStatus('转换失败: ' + error.message, true);
+										showToast('转换失败', true);
+									})
+									.finally(resetButton);
+								} catch (error) {
+									updateStatus('错误: ' + error.message, true);
+									resetButton();
+								}
+							}
 						}
 
 						function toggleNotice() {
