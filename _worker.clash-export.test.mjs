@@ -104,3 +104,24 @@ test('authorized convert endpoint returns extracted node links', async () => {
   assert.match(body.nodes, /\nhy2:\/\//);
   assert.match(body.nodes, /\nvmess:\/\//);
 });
+
+test('editor page exposes convertClashConfig for the inline button handler', async () => {
+  const { worker } = loadWorker();
+  const kv = {
+    async get() { return ''; },
+    async put() {},
+    async delete() {}
+  };
+
+  const response = await worker.fetch(new Request('https://sub.example.com/auto', {
+    headers: { 'User-Agent': 'Mozilla/5.0' }
+  }), {
+    TOKEN: 'auto',
+    KV: kv
+  });
+
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /onclick="convertClashConfig\(this\)"/);
+  assert.match(html, /window\.convertClashConfig\s*=/);
+});

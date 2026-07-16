@@ -1346,7 +1346,7 @@ https://example.com/sub">${content}</textarea>
 								timer = setTimeout(() => saveContent(), 5000);
 							});
 
-							function convertClashConfig(button) {
+							window.convertClashConfig = function(button) {
 								const source = document.getElementById('clashSource');
 								const statusElem = document.getElementById('convertStatus');
 								const updateStatus = (message, isError) => {
@@ -1393,7 +1393,7 @@ https://example.com/sub">${content}</textarea>
 									updateStatus('错误: ' + error.message, true);
 									resetButton();
 								}
-							}
+							};
 						}
 
 						function toggleNotice() {
